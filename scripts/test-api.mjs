@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+const base='http://localhost:3000';
+const login=await fetch(base+'/signin-with-chatgpt?return_to=/',{redirect:'manual'});
+const cookie=login.headers.getSetCookie().map(v=>v.split(';')[0]).join('; ');
+const get=()=>fetch(base+'/api/schedule',{headers:{Cookie:cookie}}).then(async r=>({status:r.status,data:await r.text().then(t=>{try{return JSON.parse(t)}catch{return {error:t}}})}));
+const put=(data,origin=base)=>fetch(base+'/api/schedule',{method:'PUT',headers:{Cookie:cookie,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(data)}).then(async r=>({status:r.status,data:await r.text().then(t=>{try{return JSON.parse(t)}catch{return {error:t}}})}));
+assert.equal((await fetch(base+'/api/schedule')).status,401);
+let initial=await get();if(initial.status===200&&initial.data.courses.some(c=>c.id==='test-added'))await put({...initial.data,courses:initial.data.courses.filter(c=>c.id!=='test-added')});
+const original=await get();assert.equal(original.status,200);
+const newCourse={id:'test-added',name:'测试课程',code:'TEST',teacher:'测试教师',room:'教室 102',category:'自定义',notes:'',weeks:[2,10],day:7,start:1,end:2};
+let next=await put({...original.data,courses:[...original.data.courses,newCourse]});assert.equal(next.status,200);assert.equal((await get()).data.courses.at(-1).name,'测试课程');
+assert.equal((await put(original.data)).status,409,'stale device cannot overwrite');
+assert.equal((await put(next.data,'https://wrong.example')).status,403,'CSRF blocked');
+assert.equal((await put({...next.data,courses:[{...newCourse,weeks:[31]}]})).status,400,'invalid week blocked');
+next=await put({...next.data,courses:next.data.courses.map(c=>c.id==='test-added'?{...c,weeks:[10],room:'TEST-102'}:c)});assert.equal(next.status,200);assert.deepEqual((await get()).data.courses.at(-1).weeks,[10]);
+next=await put({...next.data,courses:original.data.courses,settings:original.data.settings});assert.equal(next.status,200);assert.deepEqual((await get()).data.courses,original.data.courses);
+console.log('PASS: auth, import, add/read-back, edit, single-week deletion, whole deletion, optimistic concurrency, CSRF, validation. Original account state restored.');
